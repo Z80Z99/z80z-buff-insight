@@ -33,14 +33,29 @@ import java.util.Set;
 public final class EffectTracker {
     private static final Logger LOGGER = LoggerFactory.getLogger("BuffInsight/Tracker");
     private static final String HANDLER_NAME = "buff_insight_effect_listener";
-    private static final long FADE_MS = 300L;
+    /** 渲染器淡出动画时长，与死亡时间的差值计算共用 */
+    public static final long FADE_MS = 300L;
     private static final Map<MobEffect, Integer> INITIAL_DURATIONS = new HashMap<>();
     private static volatile boolean packetDirty;
     private static volatile int localPlayerId = Integer.MIN_VALUE;
     private static final List<DisplayEntry> DISPLAY = new ArrayList<>();
+    /** 渲染热路径直接读取的不可变缓存，refresh 时整体重建，访问零分配 */
+    private static volatile List<DisplayEntry> displayCache = List.of();
+    private static volatile List<EffectSnapshot> snapshotCache = List.of();
+    private static volatile List<Notice> noticeCache = List.of();
+    /** 原版自然顺序的效果列表（供背包悬停复刻原版布局），refresh 时重建 */
+    private static volatile List<MobEffectInstance> vanillaOrderCache = List.of();
     private static Set<MobEffect> previousEffects = Set.of();
     private static int ticks;
     private static boolean initialized;
+
+    /** 显示条目排序：先有益后其他，再按快照预计算的排序键（不触发翻译解析） */
+    private static final java.util.Comparator<DisplayEntry> DISPLAY_ORDER = (left, right) -> {
+        int category = Boolean.compare(right.snapshot().effect().isBeneficial(),
+                left.snapshot().effect().isBeneficial());
+        if (category != 0) return category;
+        return left.snapshot().sortName().compareTo(right.snapshot().sortName());
+    };
 
     /** 渲染显示条目：存活条目 deathAt=0，消失中的条目保留至淡出结束 */
     public record DisplayEntry(EffectSnapshot snapshot, long bornAt, long deathAt) {
@@ -60,23 +75,22 @@ public final class EffectTracker {
 
     /** 完整显示列表（含淡出中的条目），供渲染器做动画 */
     public static List<DisplayEntry> display() {
-        return List.copyOf(DISPLAY);
+        return displayCache;
     }
 
     /** 并存模式的活跃通知 */
     public static List<Notice> notices() {
-        long now = Util.getMillis();
-        NOTICES.removeIf(notice -> now >= notice.hideAt() + 350L);
-        return List.copyOf(NOTICES);
+        return noticeCache;
     }
 
     /** 仅存活的快照 */
     public static List<EffectSnapshot> snapshots() {
-        List<EffectSnapshot> alive = new ArrayList<>();
-        for (DisplayEntry entry : DISPLAY) {
-            if (entry.alive()) alive.add(entry.snapshot());
-        }
-        return alive;
+        return snapshotCache;
+    }
+
+    /** 原版自然顺序效果列表（背包悬停用） */
+    public static List<MobEffectInstance> vanillaOrder() {
+        return vanillaOrderCache;
     }
 
     public static void attachPacketListener(Connection connection) {
@@ -117,6 +131,10 @@ public final class EffectTracker {
     public static void reset() {
         DISPLAY.clear();
         NOTICES.clear();
+        displayCache = List.of();
+        snapshotCache = List.of();
+        noticeCache = List.of();
+        vanillaOrderCache = List.of();
         previousEffects = Set.of();
         INITIAL_DURATIONS.clear();
         packetDirty = false;
@@ -139,13 +157,16 @@ public final class EffectTracker {
         BuffInsightConfig config = BuffInsightConfig.get();
         // 关闭模式也保持采集：背包原版图标的悬停详细说明依赖快照数据
         ticks++;
-        int interval = config.readMode == BuffInsightConfig.ReadMode.PACKET_PRIORITY
-                ? 20 : config.realtimeIntervalTicks;
-        boolean shouldRefresh = packetDirty || ticks % Math.max(1, interval) == 0 || !initialized;
+        boolean periodic;
         if (config.readMode == BuffInsightConfig.ReadMode.REALTIME) {
-            shouldRefresh = ticks % Math.max(1, config.realtimeIntervalTicks) == 0 || !initialized;
+            // 实时模式只按固定间隔轮询，不响应包事件
+            periodic = ticks % Math.max(1, config.realtimeIntervalTicks) == 0;
+        } else {
+            int interval = config.readMode == BuffInsightConfig.ReadMode.PACKET_PRIORITY
+                    ? 20 : config.realtimeIntervalTicks;
+            periodic = ticks % Math.max(1, interval) == 0;
         }
-        if (shouldRefresh) refresh(player, initialized);
+        if (periodic || packetDirty || !initialized) refresh(player, initialized);
     }
 
     private static void refresh(LocalPlayer player, boolean allowFeedback) {
@@ -163,11 +184,6 @@ public final class EffectTracker {
             updated.add(EffectSnapshot.of(instance, Math.max(1, initial)));
         }
         INITIAL_DURATIONS.keySet().removeIf(effect -> !currentEffects.contains(effect));
-        updated.sort((left, right) -> {
-            int category = Boolean.compare(right.effect().isBeneficial(), left.effect().isBeneficial());
-            if (category != 0) return category;
-            return left.effect().getDisplayName().getString().compareToIgnoreCase(right.effect().getDisplayName().getString());
-        });
 
         if (allowFeedback && BuffInsightConfig.get().displayMode != BuffInsightConfig.DisplayMode.OFF) {
             boolean gainedGood = false, gainedBad = false, lostGood = false, lostBad = false;
@@ -219,16 +235,26 @@ public final class EffectTracker {
             }
         }
         DISPLAY.removeIf(entry -> !entry.alive() && now >= entry.deathAt());
-        DISPLAY.sort((left, right) -> {
-            int category = Boolean.compare(right.snapshot().effect().isBeneficial(),
-                    left.snapshot().effect().isBeneficial());
-            if (category != 0) return category;
-            return left.snapshot().effect().getDisplayName().getString()
-                    .compareToIgnoreCase(right.snapshot().effect().getDisplayName().getString());
-        });
+        NOTICES.removeIf(notice -> now >= notice.hideAt() + 50L);
+        DISPLAY.sort(DISPLAY_ORDER);
+        rebuildCaches(active);
         previousEffects = Set.copyOf(currentEffects);
         packetDirty = false;
         initialized = true;
+    }
+
+    /** refresh 末尾整体重建渲染热路径读取的不可变缓存（tick 与渲染同线程，volatile 仅作可见性保险） */
+    private static void rebuildCaches(Collection<MobEffectInstance> active) {
+        displayCache = List.copyOf(DISPLAY);
+        List<EffectSnapshot> alive = new ArrayList<>(DISPLAY.size());
+        for (DisplayEntry entry : DISPLAY) {
+            if (entry.alive()) alive.add(entry.snapshot());
+        }
+        snapshotCache = List.copyOf(alive);
+        noticeCache = List.copyOf(NOTICES);
+        List<MobEffectInstance> vanillaOrder = new ArrayList<>(active);
+        java.util.Collections.sort(vanillaOrder);
+        vanillaOrderCache = List.copyOf(vanillaOrder);
     }
 
     /** 有益效果走清脆系（Pling/气泡），有害效果走低沉系（吉他/水晶） */

@@ -13,7 +13,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.effect.MobEffect;
-import net.minecraft.world.effect.MobEffectCategory;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.client.event.ScreenEvent;
@@ -21,15 +20,17 @@ import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 
 public final class BuffHudRenderer {
     private static final ResourceLocation VANILLA_ICONS = new ResourceLocation("textures/gui/icons.png");
     private static final long APPEAR_MS = 200L;
+    /** 共享主题与布局常量（配置界面复用） */
+    public static final int THEME_GREEN = 0xFF55D778;
+    public static final int ROW_LINE_HEIGHT = 9;
+    public static final int MIN_ROW_HEIGHT = 21;
+    public static final long SCROLL_PERIOD_MS = 2600L;
 
     private BuffHudRenderer() {
     }
@@ -41,10 +42,10 @@ public final class BuffHudRenderer {
         if (config.displayMode == BuffInsightConfig.DisplayMode.OFF) return;
         if (config.displayMode == BuffInsightConfig.DisplayMode.REPLACE) {
             event.setCanceled(true);
-            render(event.getGuiGraphics(), event.getPartialTick());
+            render(event.getGuiGraphics());
         } else {
             // 并存：原版图标照常，仅弹出临时通知卡片
-            drawNotices(event.getGuiGraphics(), Minecraft.getInstance(), config, event.getPartialTick());
+            drawNotices(event.getGuiGraphics(), Minecraft.getInstance(), config);
         }
     }
 
@@ -67,7 +68,7 @@ public final class BuffHudRenderer {
             if (config.displayMode == BuffInsightConfig.DisplayMode.REPLACE) {
                 List<EffectTracker.DisplayEntry> entries = EffectTracker.display();
                 if (entries.isEmpty()) return;
-                int panelWidth = panelWidth(minecraft.font, EffectTracker.snapshots(), config);
+                int panelWidth = panelWidth(config);
                 int anchorX = container.getGuiLeft() + container.getXSize() + 6;
                 int x;
                 int top;
@@ -79,8 +80,8 @@ public final class BuffHudRenderer {
                     x = event.getGuiGraphics().guiWidth() - panelWidth - 4;
                     top = 4;
                 }
-                drawRows(event.getGuiGraphics(), minecraft, entries, config, x, top,
-                        event.getPartialTick(), event.getMouseX(), event.getMouseY());
+                drawRows(event.getGuiGraphics(), minecraft, entries, config, x, top, panelWidth,
+                        event.getMouseX(), event.getMouseY());
             } else {
                 drawVanillaHoverTooltip(event.getGuiGraphics(), minecraft, container,
                         event.getMouseX(), event.getMouseY());
@@ -90,57 +91,56 @@ public final class BuffHudRenderer {
         if (config.displayMode != BuffInsightConfig.DisplayMode.REPLACE) return;
         List<EffectTracker.DisplayEntry> entries = EffectTracker.display();
         if (entries.isEmpty()) return;
+        int panelWidth = panelWidth(config);
         boolean left = config.layout == BuffInsightConfig.Layout.LEFT_PANEL;
-        int panelWidth = panelWidth(minecraft.font, EffectTracker.snapshots(), config);
         int x = left ? 8 : event.getGuiGraphics().guiWidth() - panelWidth - 8;
         int top = left ? 18 : 5;
-        drawRows(event.getGuiGraphics(), minecraft, entries, config, x, top,
-                event.getPartialTick(), event.getMouseX(), event.getMouseY());
+        drawRows(event.getGuiGraphics(), minecraft, entries, config, x, top, panelWidth,
+                event.getMouseX(), event.getMouseY());
     }
 
-    private static void render(GuiGraphics graphics, float partialTick) {
+    private static void render(GuiGraphics graphics) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null || minecraft.options.hideGui) return;
         if (minecraft.screen != null) return;
         List<EffectTracker.DisplayEntry> entries = EffectTracker.display();
         if (entries.isEmpty()) return;
         BuffInsightConfig config = BuffInsightConfig.get();
-        int panelWidth = panelWidth(minecraft.font, EffectTracker.snapshots(), config);
+        int panelWidth = panelWidth(config);
         boolean left = config.layout == BuffInsightConfig.Layout.LEFT_PANEL;
         int x = left ? 8 : graphics.guiWidth() - panelWidth - 8;
         int top = left ? 18 : 5;
-        drawRows(graphics, minecraft, entries, config, x, top, partialTick, -1, -1);
+        drawRows(graphics, minecraft, entries, config, x, top, panelWidth, -1, -1);
     }
 
     /** 并存模式：获得效果时在屏幕顶部弹出通知卡片（避开右上角原版图标），到时淡出 */
-    private static void drawNotices(GuiGraphics graphics, Minecraft minecraft, BuffInsightConfig config,
-                                    float partialTick) {
+    private static void drawNotices(GuiGraphics graphics, Minecraft minecraft, BuffInsightConfig config) {
         if (minecraft.player == null || minecraft.options.hideGui) return;
         List<EffectTracker.Notice> notices = EffectTracker.notices();
         if (notices.isEmpty()) return;
         long now = Util.getMillis();
         int guiWidth = minecraft.getWindow().getGuiScaledWidth();
         int guiHeight = minecraft.getWindow().getGuiScaledHeight();
+        int width = panelWidth(config);
         int y = 8;
         for (EffectTracker.Notice notice : notices) {
             float appear = smooth((now - notice.showAt()) / (double) APPEAR_MS);
-            float fade = Math.max(0.0F, Math.min(1.0F, (notice.hideAt() - now) / 300.0F));
+            float fade = Math.max(0.0F, Math.min(1.0F, (notice.hideAt() - now) / (float) EffectTracker.FADE_MS));
             float alpha = appear * fade;
             if (alpha <= 0.02F) continue;
             EffectSnapshot snapshot = notice.snapshot();
-            int width = panelWidth(minecraft.font, List.of(snapshot), config);
-            int height = rowHeight(List.of(snapshot), config);
+            int height = rowHeight(snapshot, config);
             // 小屏幕上堆叠超出可视区域就不再绘制
             if (y + height > guiHeight - 6) break;
             int x = Mth.clamp(guiWidth / 2 - width / 2, 4, Math.max(4, guiWidth - width - 4));
             // 通知弹窗为垂直滑动：从上方滑入，向上滑出
             int slideY = -Math.round((1.0F - appear) * 6.0F + (1.0F - fade) * 6.0F);
-            drawEffect(graphics, minecraft, snapshot, x, y + slideY, width, height + 2, config, partialTick, alpha);
+            drawEffect(graphics, minecraft, snapshot, x, y + slideY, width, height + 2, config, alpha);
             y += height + 4;
         }
     }
 
-    private static int panelWidth(Font font, List<EffectSnapshot> effects, BuffInsightConfig config) {
+    private static int panelWidth(BuffInsightConfig config) {
         int textOffset = textOffset(config.visualStyle, 28);
         int guiWidth = Minecraft.getInstance().getWindow().getGuiScaledWidth();
         // 固定基准宽度 × 配置系数：宽度不随标题/倒计时文字变化，过长文字走滚动显示
@@ -149,14 +149,13 @@ public final class BuffHudRenderer {
     }
 
     private static void drawRows(GuiGraphics graphics, Minecraft minecraft, List<EffectTracker.DisplayEntry> entries,
-                                 BuffInsightConfig config, int x, int top, float partialTick,
+                                 BuffInsightConfig config, int x, int top, int panelWidth,
                                  int mouseX, int mouseY) {
         int guiHeight = minecraft.getWindow().getGuiScaledHeight();
-        int panelWidth = panelWidth(minecraft.font, EffectTracker.snapshots(), config);
         int available = Math.max(42, guiHeight - top - 12);
         int uniformHeight = rowHeight(EffectTracker.snapshots(), config);
         int gap = config.adaptiveLayout
-                ? Math.max(21, Math.min(uniformHeight, available / Math.max(1, entries.size())))
+                ? Math.max(MIN_ROW_HEIGHT, Math.min(uniformHeight, available / Math.max(1, entries.size())))
                 : uniformHeight;
 
         long now = Util.getMillis();
@@ -167,18 +166,16 @@ public final class BuffHudRenderer {
         for (int index = 0; index < entries.size(); index++) {
             EffectTracker.DisplayEntry entry = entries.get(index);
             int y = top + index * gap;
-            if (y + 21 > guiHeight) break;
+            if (y + MIN_ROW_HEIGHT > guiHeight) break;
             float appear = smooth((now - entry.bornAt()) / (double) APPEAR_MS);
-            // 与 EffectTracker 的淡出时长（300ms）保持一致
             float fade = entry.alive()
                     ? 1.0F
-                    : Math.max(0.0F, Math.min(1.0F, (entry.deathAt() - now) / 300.0F));
+                    : Math.max(0.0F, Math.min(1.0F, (entry.deathAt() - now) / (float) EffectTracker.FADE_MS));
             float alpha = appear * fade;
             if (alpha <= 0.02F) continue;
             // 滑入 + 滑出：进入时从布局方向滑到位，消失时向布局方向滑回
             int slide = Math.round((1.0F - appear) * 8.0F + (1.0F - fade) * 8.0F) * slideDir;
-            drawEffect(graphics, minecraft, entry.snapshot(), x + slide, y, panelWidth, gap, config,
-                    partialTick, alpha);
+            drawEffect(graphics, minecraft, entry.snapshot(), x + slide, y, panelWidth, gap, config, alpha);
             if (entry.alive() && mouseX >= x && mouseX <= x + panelWidth
                     && mouseY >= y && mouseY <= y + gap) {
                 hovered = entry;
@@ -190,9 +187,19 @@ public final class BuffHudRenderer {
         }
     }
 
-    private static float smooth(double progress) {
+    /** 共享缓动：smoothstep */
+    public static float smooth(double progress) {
         float clamped = (float) Math.max(0.0D, Math.min(1.0D, progress));
         return clamped * clamped * (3.0F - 2.0F * clamped);
+    }
+
+    /** 共享滚动偏移：超长文字往复滚动的当前像素偏移 */
+    public static int scrollOffset(int overflow) {
+        if (overflow <= 0) return 0;
+        long t = Util.getMillis() % (SCROLL_PERIOD_MS * 2);
+        double phase = (double) t / SCROLL_PERIOD_MS;
+        if (phase > 1.0D) phase = 2.0D - phase;
+        return (int) Math.round(smooth(phase) * overflow);
     }
 
     private static int rowHeight(List<EffectSnapshot> effects, BuffInsightConfig config) {
@@ -203,9 +210,13 @@ public final class BuffHudRenderer {
         return rowHeight(config, lines);
     }
 
+    private static int rowHeight(EffectSnapshot snapshot, BuffInsightConfig config) {
+        return rowHeight(config, config.showAttributes ? snapshot.hudLines().size() : 0);
+    }
+
     private static int rowHeight(BuffInsightConfig config, int lines) {
-        int base = baseHeight(config.visualStyle) + lines * 9;
-        return Math.max(21, (int) Math.round(base * config.cardHeightFactor));
+        int base = baseHeight(config.visualStyle) + lines * ROW_LINE_HEIGHT;
+        return Math.max(MIN_ROW_HEIGHT, (int) Math.round(base * config.cardHeightFactor));
     }
 
     static int baseHeight(BuffInsightConfig.VisualStyle style) {
@@ -234,7 +245,7 @@ public final class BuffHudRenderer {
 
     private static void drawEffect(GuiGraphics graphics, Minecraft minecraft, EffectSnapshot snapshot,
                                    int x, int y, int width, int allocatedHeight,
-                                   BuffInsightConfig config, float partialTick, float alpha) {
+                                   BuffInsightConfig config, float alpha) {
         BuffInsightConfig.VisualStyle style = config.visualStyle;
         boolean minimal = style == BuffInsightConfig.VisualStyle.MINIMAL;
         boolean vanilla = style == BuffInsightConfig.VisualStyle.VANILLA;
@@ -242,7 +253,7 @@ public final class BuffHudRenderer {
         int height = Math.min(rowHeight(config, visibleAttributeLines), allocatedHeight - 2);
         int icon = iconSize(style, height);
         int textOffset = textOffset(style, height);
-        int categoryColor = categoryColor(snapshot);
+        int categoryColor = snapshot.categoryColor();
         int alphaI = (int) Math.round(config.opacity * 210.0D * alpha);
 
         // 即将消失：整卡闪烁
@@ -278,11 +289,9 @@ public final class BuffHudRenderer {
         drawIcon(graphics, minecraft, snapshot, iconX, iconY, icon, config,
                 flashing ? (float) (0.55D + 0.45D * pulse) : 1.0F);
         int nameY = minimal ? y + 3 : y + 4;
-        String level = EffectSnapshot.roman(snapshot.instance().getAmplifier() + 1);
-        Component name = snapshot.effect().getDisplayName().copy().append(" " + level);
         String time = rightLabel(snapshot, config);
         int timeWidth = minecraft.font.width(time);
-        drawScrollingText(graphics, minecraft.font, name, x + textOffset,
+        drawScrollingText(graphics, minecraft.font, snapshot.title(), x + textOffset,
                 x + width - timeWidth - 6, nameY, withAlpha(0xF4F4F4, (int) (alpha * 244)));
         graphics.drawString(minecraft.font, time, x + width - timeWidth - 5, nameY,
                 withAlpha(snapshot.duration() <= 100 && !snapshot.infinite() ? 0xFFC65C : 0xE1E7ED,
@@ -306,7 +315,7 @@ public final class BuffHudRenderer {
                 if (lineY + 8 > y + height) break;
                 drawScrollingText(graphics, minecraft.font, line, x + textOffset, x + width - 6, lineY,
                         withAlpha(0xB8C5CF, (int) (alpha * 184)));
-                lineY += 9;
+                lineY += ROW_LINE_HEIGHT;
             }
         }
     }
@@ -321,13 +330,7 @@ public final class BuffHudRenderer {
             graphics.drawString(font, text, x, y, color, true);
             return;
         }
-        int overflow = textWidth - available;
-        long period = 2600L;
-        long t = Util.getMillis() % (period * 2);
-        double phase = (double) t / period;
-        if (phase > 1.0D) phase = 2.0D - phase;
-        phase = phase * phase * (3.0D - 2.0D * phase);
-        int offset = (int) Math.round(phase * overflow);
+        int offset = scrollOffset(textWidth - available);
         graphics.enableScissor(x - 1, y - 2, right + 1, y + 10);
         graphics.drawString(font, text, x - offset, y, color, true);
         graphics.disableScissor();
@@ -339,18 +342,16 @@ public final class BuffHudRenderer {
                                                 int mouseX, int mouseY) {
         LocalPlayer player = minecraft.player;
         if (player == null) return;
-        Collection<MobEffectInstance> active = player.getActiveEffects();
-        if (active.isEmpty()) return;
+        List<MobEffectInstance> sorted = EffectTracker.vanillaOrder();
+        if (sorted.isEmpty()) return;
         // 精确复刻原版 renderEffects 的布局参数
         int anchorX = container.getGuiLeft() + container.getXSize() + 2;
         int availableWidth = minecraft.getWindow().getGuiScaledWidth() - anchorX;
         if (availableWidth < 32) return;
         boolean full = availableWidth >= 120;
-        int spacing = active.size() > 5 ? 132 / (active.size() - 1) : 33;
+        int spacing = sorted.size() > 5 ? 132 / (sorted.size() - 1) : 33;
         int hitWidth = full ? 120 : 33;
         if (mouseX < anchorX || mouseX > anchorX + hitWidth) return;
-        List<MobEffectInstance> sorted = new ArrayList<>(active);
-        Collections.sort(sorted);
         int y = container.getGuiTop();
         for (MobEffectInstance instance : sorted) {
             if (!instance.isVisible()) continue;
@@ -374,8 +375,7 @@ public final class BuffHudRenderer {
     private static void renderRichTooltip(GuiGraphics graphics, Minecraft minecraft, EffectSnapshot snapshot,
                                           int mouseX, int mouseY) {
         List<Component> lines = new ArrayList<>();
-        String level = EffectSnapshot.roman(snapshot.instance().getAmplifier() + 1);
-        lines.add(snapshot.effect().getDisplayName().copy().append(" " + level).withStyle(ChatFormatting.BOLD));
+        lines.add(snapshot.titleBold());
         lines.addAll(snapshot.tooltipLines());
         lines.add(Component.translatable("gui.buff_insight.remaining", timeText(snapshot))
                 .withStyle(ChatFormatting.GRAY));
@@ -398,22 +398,27 @@ public final class BuffHudRenderer {
         graphics.renderTooltip(minecraft.font, lines, Optional.empty(), mouseX, mouseY);
     }
 
-    /** AI 返回的纯文本按像素宽度折行（中文按字符断行） */
+    /** AI 返回的纯文本按像素宽度折行（中文按字符断行），行宽增量累计避免逐字符拼接 */
     private static List<Component> wrapText(Font font, String text, int maxWidth) {
         List<Component> lines = new ArrayList<>();
         StringBuilder line = new StringBuilder();
+        int lineWidth = 0;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c == '\n') {
                 lines.add(Component.literal(line.toString()));
                 line.setLength(0);
+                lineWidth = 0;
                 continue;
             }
-            if (line.length() > 0 && font.width(line.toString() + c) > maxWidth) {
+            int charWidth = font.width(String.valueOf(c));
+            if (lineWidth > 0 && lineWidth + charWidth > maxWidth) {
                 lines.add(Component.literal(line.toString()));
                 line.setLength(0);
+                lineWidth = 0;
             }
             line.append(c);
+            lineWidth += charWidth;
         }
         if (line.length() > 0) lines.add(Component.literal(line.toString()));
         return lines;
@@ -431,7 +436,7 @@ public final class BuffHudRenderer {
 
     private static void drawIcon(GuiGraphics graphics, Minecraft minecraft, EffectSnapshot snapshot,
                                  int x, int y, int size, BuffInsightConfig config, float alpha) {
-        int color = categoryColor(snapshot);
+        int color = snapshot.categoryColor();
         BuffInsightConfig.VisualStyle style = config.visualStyle;
         if (style == BuffInsightConfig.VisualStyle.CARD) {
             graphics.fill(x - 1, y - 1, x + size + 1, y + size + 1, withAlpha(color, 235));
@@ -446,13 +451,6 @@ public final class BuffHudRenderer {
         TextureAtlasSprite sprite = minecraft.getMobEffectTextures().get(snapshot.effect());
         graphics.blit(x, y, 0, size, size, sprite);
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-    }
-
-    private static int categoryColor(EffectSnapshot snapshot) {
-        MobEffectCategory category = snapshot.effect().getCategory();
-        if (category == MobEffectCategory.BENEFICIAL) return 0xFF55D778;
-        if (category == MobEffectCategory.HARMFUL) return 0xFFFF6262;
-        return 0xFF65A9FF;
     }
 
     private static int withAlpha(int color, int alpha) {
@@ -470,13 +468,13 @@ public final class BuffHudRenderer {
 
     private static String timeText(EffectSnapshot snapshot) {
         if (snapshot.infinite()) return "∞";
-        return String.format(Locale.ROOT, "%.1fs", snapshot.duration() / 20.0D);
+        int tenths = snapshot.duration() / 2;
+        return tenths / 10 + "." + tenths % 10 + "s";
     }
 
     /** 供配置界面的实时预览调用 */
     static void drawPreviewRow(GuiGraphics graphics, Minecraft minecraft, EffectSnapshot snapshot,
-                               int x, int y, int width, int allocatedHeight,
-                               BuffInsightConfig config, float partialTick) {
-        drawEffect(graphics, minecraft, snapshot, x, y, width, allocatedHeight, config, partialTick, 1.0F);
+                               int x, int y, int width, int allocatedHeight, BuffInsightConfig config) {
+        drawEffect(graphics, minecraft, snapshot, x, y, width, allocatedHeight, config, 1.0F);
     }
 }

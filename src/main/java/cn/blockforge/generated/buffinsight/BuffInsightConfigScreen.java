@@ -16,7 +16,6 @@ import net.minecraftforge.fml.ModList;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,7 +26,7 @@ import java.util.function.Supplier;
 public final class BuffInsightConfigScreen extends Screen {
     private static final int PANEL_BG = 0xF20C1017;
     private static final int PANEL_EDGE = 0xFF37465A;
-    private static final int ACCENT = 0xFF55D778;
+    private static final int ACCENT = BuffHudRenderer.THEME_GREEN;
     private static final int HEADER_TEXT = 0xFF8FB4D0;
     private static final int HINT_TEXT = 0xFF77879A;
     private static final int ROW_BG = 0x80101418;
@@ -46,6 +45,8 @@ public final class BuffInsightConfigScreen extends Screen {
     private int scrollY;
     private int maxScroll;
     private boolean previewOn;
+    private List<EffectSnapshot> previewSamples = List.of();
+    private long previewBuiltAt;
 
     public BuffInsightConfigScreen(Screen parent) {
         super(Component.translatable("gui.buff_insight.title"));
@@ -315,12 +316,12 @@ public final class BuffInsightConfigScreen extends Screen {
             }
         }
         if (previewOn) {
-            drawPreview(graphics, partialTick);
+            drawPreview(graphics);
         }
     }
 
-    /** 右侧实时预览：三行示例（增益有属性 / 增益纯描述 / 减益），随当前风格即时变化 */
-    private void drawPreview(GuiGraphics graphics, float partialTick) {
+    /** 右侧实时预览：三行示例（增益有属性 / 增益纯描述 / 减益），随当前风格即时变化；样例 500ms 重建一次 */
+    private void drawPreview(GuiGraphics graphics) {
         BuffInsightConfig config = BuffInsightConfig.get();
         Minecraft minecraft = Minecraft.getInstance();
         int previewX = panelX + panelW - 128;
@@ -328,19 +329,25 @@ public final class BuffInsightConfigScreen extends Screen {
         int previewY = panelY + 44;
         graphics.drawCenteredString(font, lang("preview"), previewX + previewW / 2, previewY - 14, HEADER_TEXT);
 
-        long ticks = net.minecraft.Util.getMillis() / 50L;
-        List<EffectSnapshot> samples = new ArrayList<>();
-        samples.add(EffectSnapshot.of(new MobEffectInstance(MobEffects.DIG_SPEED,
-                (int) (600 + ticks % 900), 1), 1500));
-        samples.add(EffectSnapshot.of(new MobEffectInstance(MobEffects.REGENERATION,
-                (int) (300 + ticks % 600), 0), 900));
-        samples.add(EffectSnapshot.of(new MobEffectInstance(MobEffects.POISON,
-                (int) (200 + ticks % 500), 0), 700));
+        long now = net.minecraft.Util.getMillis();
+        if (previewSamples.isEmpty() || now - previewBuiltAt > 500L) {
+            long ticks = now / 50L;
+            List<EffectSnapshot> samples = new ArrayList<>(3);
+            samples.add(EffectSnapshot.of(new MobEffectInstance(MobEffects.DIG_SPEED,
+                    (int) (600 + ticks % 900), 1), 1500));
+            samples.add(EffectSnapshot.of(new MobEffectInstance(MobEffects.REGENERATION,
+                    (int) (300 + ticks % 600), 0), 900));
+            samples.add(EffectSnapshot.of(new MobEffectInstance(MobEffects.POISON,
+                    (int) (200 + ticks % 500), 0), 700));
+            previewSamples = samples;
+            previewBuiltAt = now;
+        }
 
-        int rowH = BuffHudRenderer.baseHeight(config.visualStyle) + (config.showAttributes ? 9 : 0);
-        for (int i = 0; i < samples.size(); i++) {
-            BuffHudRenderer.drawPreviewRow(graphics, minecraft, samples.get(i),
-                    previewX, previewY + i * (rowH + 4), previewW, rowH, config, partialTick);
+        int rowH = BuffHudRenderer.baseHeight(config.visualStyle)
+                + (config.showAttributes ? BuffHudRenderer.ROW_LINE_HEIGHT : 0);
+        for (int i = 0; i < previewSamples.size(); i++) {
+            BuffHudRenderer.drawPreviewRow(graphics, minecraft, previewSamples.get(i),
+                    previewX, previewY + i * (rowH + 4), previewW, rowH, config);
         }
     }
 
@@ -377,7 +384,6 @@ public final class BuffInsightConfigScreen extends Screen {
 
     /** 主题行：深色底 + 悬停高亮 + 右侧数值/状态胶囊，点击切换 */
     private static final class OptionRow extends AbstractWidget {
-        private final Component label;
         private final Supplier<Component> value;
         private final Runnable activate;
         private final BooleanSupplier toggleState;
@@ -385,7 +391,6 @@ public final class BuffInsightConfigScreen extends Screen {
         private OptionRow(int x, int y, int width, int height, Component label,
                           Supplier<Component> value, Runnable activate, BooleanSupplier toggleState) {
             super(x, y, width, height, label);
-            this.label = label;
             this.value = value;
             this.activate = activate;
             this.toggleState = toggleState;
@@ -419,18 +424,15 @@ public final class BuffInsightConfigScreen extends Screen {
             graphics.drawCenteredString(minecraft.font, valueText, pillX + pillWidth / 2,
                     pillY + (pillH - 8) / 2, pillText);
 
-            // 标签绘制到胶囊左侧，超长滚动裁剪
+            // 标签绘制到胶囊左侧，超长滚动裁剪（滚动偏移复用渲染器共享实现）
+            Component label = getMessage();
             int labelRight = pillX - 4;
             int labelX = getX() + 5;
             if (minecraft.font.width(label) > labelRight - labelX) {
                 graphics.enableScissor(labelX, getY(), labelRight, getY() + height);
-                long period = 2600L;
-                long t = net.minecraft.Util.getMillis() % (period * 2);
-                double phase = (double) t / period;
-                if (phase > 1.0D) phase = 2.0D - phase;
                 int overflow = minecraft.font.width(label) - (labelRight - labelX);
                 graphics.drawString(minecraft.font, label,
-                        labelX - (int) Math.round(phase * phase * (3.0D - 2.0D * phase) * overflow),
+                        labelX - BuffHudRenderer.scrollOffset(overflow),
                         getY() + (height - 8) / 2, hovered ? 0xFFFFFFFF : LABEL_TEXT);
                 graphics.disableScissor();
             } else {

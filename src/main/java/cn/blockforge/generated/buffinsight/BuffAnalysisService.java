@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.reflect.TypeToken;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraftforge.registries.ForgeRegistries;
@@ -61,7 +62,9 @@ public final class BuffAnalysisService {
     public static void loadCache() {
         if (!Files.exists(CACHE_PATH)) return;
         try (Reader reader = Files.newBufferedReader(CACHE_PATH, StandardCharsets.UTF_8)) {
-            Map<String, String> loaded = PRETTY.fromJson(reader, Map.class);
+            Map<String, String> loaded = PRETTY.fromJson(reader,
+                    new TypeToken<Map<String, String>>() {
+                    }.getType());
             if (loaded != null) CACHE.putAll(loaded);
         } catch (Exception exception) {
             LOGGER.warn("AI 分析缓存读取失败，忽略", exception);
@@ -78,13 +81,13 @@ public final class BuffAnalysisService {
 
     /** 当前某效果的 AI 状态；未请求过返回 null */
     public static AiState get(EffectSnapshot snapshot) {
-        return STATES.get(cacheKey(snapshot));
+        return STATES.get(snapshot.aiKey());
     }
 
     /** 需要时触发异步分析；已缓存/进行中/冷却中则直接返回 */
     public static void requestAsync(EffectSnapshot snapshot, BuffInsightConfig config) {
         if (!config.aiEnabled || config.aiApiKey.isBlank()) return;
-        String key = cacheKey(snapshot);
+        String key = snapshot.aiKey();
         if (CACHE.containsKey(key) || INFLIGHT.contains(key)) return;
         Long failedAt = FAILED_AT.get(key);
         if (failedAt != null && System.currentTimeMillis() - failedAt < FAIL_COOLDOWN_MS) return;
@@ -101,9 +104,11 @@ public final class BuffAnalysisService {
                 String answer = callApi(endpoint, apiKey, model, prompt, chinese);
                 CACHE.put(key, answer);
                 STATES.put(key, new AiState(Status.READY, answer));
+                // 成功后清除失败冷却记录，避免陈旧时间戳累积
+                FAILED_AT.remove(key);
                 saveCache();
             } catch (Exception exception) {
-                LOGGER.debug("AI 分析请求失败: {}", exception.toString());
+                LOGGER.warn("AI 分析请求失败: {}", exception.toString());
                 String message = exception.getMessage();
                 FAILED_AT.put(key, System.currentTimeMillis());
                 STATES.put(key, new AiState(Status.FAILED,
@@ -114,12 +119,6 @@ public final class BuffAnalysisService {
         });
     }
 
-    private static String cacheKey(EffectSnapshot snapshot) {
-        var id = ForgeRegistries.MOB_EFFECTS.getKey(snapshot.effect());
-        return (id == null ? snapshot.effect().getCategory().toString() : id.toString())
-                + "#" + snapshot.instance().getAmplifier();
-    }
-
     private static String buildPrompt(EffectSnapshot snapshot) {
         String category = switch (snapshot.effect().getCategory()) {
             case BENEFICIAL -> "增益";
@@ -128,7 +127,7 @@ public final class BuffAnalysisService {
         };
         StringBuilder prompt = new StringBuilder();
         prompt.append("效果: ").append(snapshot.effect().getDisplayName().getString()).append(" ")
-                .append(EffectSnapshot.roman(snapshot.instance().getAmplifier() + 1))
+                .append(snapshot.roman())
                 .append("（").append(category).append("）\n");
         prompt.append(snapshot.infinite() ? "剩余: 无限" : "剩余: " + snapshot.duration() / 20 + "秒").append('\n');
         if (!snapshot.tooltipLines().isEmpty()) {
