@@ -1,6 +1,8 @@
 # Buff 数值透视 (Buff Insight)
 
-Minecraft 1.20.1 Forge 客户端模组，将原版药水效果图标替换为信息完整的 BUFF 卡片面板。
+Minecraft 1.20.1 Forge **客户端**模组，将原版药水效果图标替换为信息完整的 BUFF 卡片面板。
+
+Minecraft 1.20.1 · Forge 47.4.0 · Java 17 · 仅客户端
 
 ## 功能
 
@@ -15,6 +17,14 @@ Minecraft 1.20.1 Forge 客户端模组，将原版药水效果图标替换为信
 - **反馈**：获得/失去效果提示音（增益高音、减益低音）与粒子
 - **界面尺寸自适应**：面板宽度、垂直压缩、创造模式物品栏位置回退均自动处理
 
+## 安装
+
+1. 安装 [Minecraft Forge 1.20.1-47.4.0](https://files.minecraftforge.net/net/minecraftforge/forge/index_1.20.1.html)。
+2. 从 [Releases](https://github.com/Z80Z99/z80z-buff-insight/releases) 下载最新的 `z80z-buff-insight-<版本>.jar`。
+3. 放入 `.minecraft/mods/` 文件夹。
+
+**仅需安装在客户端，服务器不需要安装本模组**，也没有第三方前置。
+
 ## 使用
 
 - 按 **M** 打开设置界面（可在按键设置中修改），或从 Forge 模组菜单点「配置」
@@ -26,13 +36,17 @@ Minecraft 1.20.1 Forge 客户端模组，将原版药水效果图标替换为信
 默认指向智谱 OpenAI 兼容地址，模型 `glm-4-flash`（免费档）。
 数据仅在开关开启时发送到所配置的服务商；分析结果缓存于 `config/buff_insight_ai_cache.json`。
 
-## 构建
+> **隐私提示**：API Key 以明文保存在 `config/buff_insight.json`，请勿分享该文件或随整合包分发。
+
+## 从源码构建
+
+需要 JDK 17，项目自带 Gradle Wrapper：
 
 ```bash
 ./gradlew build
 ```
 
-产物位于 `build/libs/`。
+产物位于 `build/libs/z80z-buff-insight-<版本>.jar`。
 
 ## 环境
 
@@ -40,6 +54,6 @@ Minecraft 1.20.1 Forge 客户端模组，将原版药水效果图标替换为信
 - Forge 47.4.0
 - Java 17
 
-## 许可
+## 许可证
 
-All Rights Reserved。
+MIT，详见 [LICENSE](LICENSE)。
