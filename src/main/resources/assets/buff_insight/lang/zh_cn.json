@@ -1,8 +1,8 @@
 {
-  "key.categories.buff_insight": "Buff 数值透视",
+  "key.categories.buff_insight": "Z80Z Buff 数值透视",
   "key.buff_insight.open_config": "打开 Buff 数值透视设置",
 
-  "gui.buff_insight.title": "Buff 数值透视设置",
+  "gui.buff_insight.title": "Z80Z Buff 数值透视设置",
   "gui.buff_insight.hint": "按 %s 随时打开 · 配置写入 config/buff_insight.json",
   "gui.buff_insight.strength": "效果强度 %s",
 

@@ -1,5 +1,5 @@
 plugins { id 'java'; id 'net.minecraftforge.gradle' version '6.0.51' }
-version = '1.0.0-r15'
+version = '1.0.0-r16'
 group = 'cn.blockforge.generated.buffinsight'
 base { archivesName = 'z80z-buff-insight' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -15,7 +15,7 @@ minecraft {
 dependencies { minecraft 'net.minecraftforge:forge:1.20.1-47.4.0' }
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 processResources {
-    def props = [mod_id: 'buff_insight', mod_name: 'Buff 数值透视', mod_version: project.version,
+    def props = [mod_id: 'buff_insight', mod_name: 'Z80Z Buff 数值透视', mod_version: project.version,
                  minecraft_version: '1.20.1', forge_version: '47.4.0']
     inputs.properties props
     filteringCharset = 'UTF-8'

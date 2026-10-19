@@ -1,8 +1,8 @@
 {
-  "key.categories.buff_insight": "Buff Insight",
+  "key.categories.buff_insight": "Z80Z Buff Insight",
   "key.buff_insight.open_config": "Open Buff Insight Settings",
 
-  "gui.buff_insight.title": "Buff Insight Settings",
+  "gui.buff_insight.title": "Z80Z Buff Insight Settings",
   "gui.buff_insight.hint": "Press %s anytime · settings saved to config/buff_insight.json",
   "gui.buff_insight.strength": "Potency %s",
 
