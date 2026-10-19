@@ -1,5 +1,5 @@
 plugins { id 'java'; id 'net.minecraftforge.gradle' version '6.0.51' }
-version = '1.0.0-r14'
+version = '1.0.0-r15'
 group = 'cn.blockforge.generated.buffinsight'
 base { archivesName = 'z80z-buff-insight' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
