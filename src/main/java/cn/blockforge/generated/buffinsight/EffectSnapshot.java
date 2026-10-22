@@ -31,6 +31,10 @@ public final class EffectSnapshot {
     private final int categoryColor;
     private final String sortName;
     private final String aiKey;
+    /** 右侧时间标签记忆化：时长每秒仅变 10 次，避免每帧重拼字符串 */
+    private String labelMemo;
+    private int labelMemoTick = Integer.MIN_VALUE;
+    private boolean labelMemoPercent;
 
     private EffectSnapshot(MobEffectInstance instance, int initialDuration, List<Component> hudLines,
                            List<Component> tooltipLines, Component title, Component titleBold, String roman,
@@ -99,6 +103,26 @@ public final class EffectSnapshot {
 
     public String aiKey() {
         return aiKey;
+    }
+
+    /** 右侧标签：剩余时间（可选百分比合并显示），按当前时长 tick 记忆化 */
+    public String rightLabel(boolean withPercent) {
+        int tick = instance.getDuration();
+        if (labelMemoTick != tick || labelMemoPercent != withPercent) {
+            labelMemoTick = tick;
+            labelMemoPercent = withPercent;
+            labelMemo = computeRightLabel(tick, withPercent);
+        }
+        return labelMemo;
+    }
+
+    private String computeRightLabel(int tick, boolean withPercent) {
+        boolean infinite = infinite();
+        String time = infinite ? "∞" : (tick / 2) / 10 + "." + (tick / 2) % 10 + "s";
+        if (withPercent && !infinite) {
+            return time + " · " + Math.round(progress() * 100.0D) + "%";
+        }
+        return time;
     }
 
     /** 统一的快照构建入口：HUD 行与悬停行都在这里决定 */

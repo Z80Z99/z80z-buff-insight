@@ -289,7 +289,7 @@ public final class BuffHudRenderer {
         drawIcon(graphics, minecraft, snapshot, iconX, iconY, icon, config,
                 flashing ? (float) (0.55D + 0.45D * pulse) : 1.0F);
         int nameY = minimal ? y + 3 : y + 4;
-        String time = rightLabel(snapshot, config);
+        String time = snapshot.rightLabel(config.showPercentage);
         int timeWidth = minecraft.font.width(time);
         drawScrollingText(graphics, minecraft.font, snapshot.title(), x + textOffset,
                 x + width - timeWidth - 6, nameY, withAlpha(0xF4F4F4, (int) (alpha * 244)));
@@ -371,31 +371,51 @@ public final class BuffHudRenderer {
         return null;
     }
 
+    /** 悬停 tooltip 中的固定文案（组件不可变，静态复用避免每帧构建） */
+    private static final Component AI_TIP_LINE =
+            Component.translatable("gui.buff_insight.ai.tip").withStyle(ChatFormatting.DARK_GREEN);
+    private static final Component AI_PENDING_LINE =
+            Component.translatable("gui.buff_insight.ai.pending")
+                    .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC);
+    /** AI 文本折行结果记忆化：文本与宽度不变时直接复用（同一悬停下每帧命中） */
+    private static String wrapMemoText;
+    private static int wrapMemoWidth;
+    private static List<Component> wrapMemoResult = List.of();
+
     /** 悬停详细说明：名称+等级、属性数值、描述、剩余时间、AI 分析 */
     private static void renderRichTooltip(GuiGraphics graphics, Minecraft minecraft, EffectSnapshot snapshot,
                                           int mouseX, int mouseY) {
         List<Component> lines = new ArrayList<>();
         lines.add(snapshot.titleBold());
         lines.addAll(snapshot.tooltipLines());
-        lines.add(Component.translatable("gui.buff_insight.remaining", timeText(snapshot))
+        lines.add(Component.translatable("gui.buff_insight.remaining", snapshot.rightLabel(false))
                 .withStyle(ChatFormatting.GRAY));
         BuffInsightConfig config = BuffInsightConfig.get();
         if (config.aiEnabled) {
             BuffAnalysisService.requestAsync(snapshot, config);
             BuffAnalysisService.AiState ai = BuffAnalysisService.get(snapshot);
             if (ai != null) {
-                lines.add(Component.translatable("gui.buff_insight.ai.tip").withStyle(ChatFormatting.DARK_GREEN));
+                lines.add(AI_TIP_LINE);
                 switch (ai.status()) {
-                    case READY -> lines.addAll(wrapText(minecraft.font, ai.text(),
+                    case READY -> lines.addAll(wrappedText(minecraft.font, ai.text(),
                             Math.min(200, graphics.guiWidth() - 40)));
-                    case PENDING -> lines.add(Component.translatable("gui.buff_insight.ai.pending")
-                            .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
+                    case PENDING -> lines.add(AI_PENDING_LINE);
                     case FAILED -> lines.add(Component.translatable("gui.buff_insight.ai.failed", ai.text())
                             .withStyle(ChatFormatting.RED));
                 }
             }
         }
         graphics.renderTooltip(minecraft.font, lines, Optional.empty(), mouseX, mouseY);
+    }
+
+    private static List<Component> wrappedText(Font font, String text, int maxWidth) {
+        // AI 文本字符串来自缓存 Map，引用稳定，用引用比较即可
+        if (text != wrapMemoText || wrapMemoWidth != maxWidth) {
+            wrapMemoText = text;
+            wrapMemoWidth = maxWidth;
+            wrapMemoResult = wrapText(font, text, maxWidth);
+        }
+        return wrapMemoResult;
     }
 
     /** AI 返回的纯文本按像素宽度折行（中文按字符断行），行宽增量累计避免逐字符拼接 */
@@ -455,21 +475,6 @@ public final class BuffHudRenderer {
 
     private static int withAlpha(int color, int alpha) {
         return (Math.max(0, Math.min(255, alpha)) << 24) | (color & 0x00FFFFFF);
-    }
-
-    /** 名称行右侧的标签：剩余时间（+ 可选百分比） */
-    private static String rightLabel(EffectSnapshot snapshot, BuffInsightConfig config) {
-        String time = timeText(snapshot);
-        if (config.showPercentage && !snapshot.infinite()) {
-            return time + " · " + Math.round(snapshot.progress() * 100.0D) + "%";
-        }
-        return time;
-    }
-
-    private static String timeText(EffectSnapshot snapshot) {
-        if (snapshot.infinite()) return "∞";
-        int tenths = snapshot.duration() / 2;
-        return tenths / 10 + "." + tenths % 10 + "s";
     }
 
     /** 供配置界面的实时预览调用 */

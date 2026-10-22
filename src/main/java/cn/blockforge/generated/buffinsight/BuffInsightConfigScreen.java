@@ -33,6 +33,9 @@ public final class BuffInsightConfigScreen extends Screen {
     private static final int ROW_EDGE = 0x5037465A;
     private static final int LABEL_TEXT = 0xFFC9D6E2;
     private static final String VERSION = resolveVersion();
+    /** 开/关文案按当前语言解析一次，避免每帧翻译查找 */
+    private static final String STATE_ON = Component.translatable("gui.buff_insight.state.on").getString();
+    private static final String STATE_OFF = Component.translatable("gui.buff_insight.state.off").getString();
 
     private final Screen parent;
     private final Map<GuiEventListener, Integer> baseY = new IdentityHashMap<>();
@@ -198,12 +201,11 @@ public final class BuffInsightConfigScreen extends Screen {
         widget.setTooltip(Tooltip.create(Component.translatable("gui.buff_insight." + key + ".desc")));
     }
 
-    /** 自绘开关行：左侧标签 + 右侧状态胶囊 */
+    /** 自绘开关行：左侧标签 + 右侧状态胶囊（开关文案静态解析一次） */
     private AbstractWidget toggleRow(int x, int y, int width, String name, BooleanSupplier getter,
                                      Consumer<Boolean> setter) {
         OptionRow row = new OptionRow(x, y, width, 20, lang(name),
-                () -> Component.literal(getter.getAsBoolean()
-                        ? lang("state.on").getString() : lang("state.off").getString()),
+                () -> Component.literal(getter.getAsBoolean() ? STATE_ON : STATE_OFF),
                 () -> setter.accept(!getter.getAsBoolean()), getter);
         tooltip(row, name);
         return row;
@@ -387,6 +389,8 @@ public final class BuffInsightConfigScreen extends Screen {
         private final Supplier<Component> value;
         private final Runnable activate;
         private final BooleanSupplier toggleState;
+        /** 胶囊文案缓存：仅在构建与点击切换时重建，渲染帧直接复用 */
+        private Component valueCache;
 
         private OptionRow(int x, int y, int width, int height, Component label,
                           Supplier<Component> value, Runnable activate, BooleanSupplier toggleState) {
@@ -394,6 +398,7 @@ public final class BuffInsightConfigScreen extends Screen {
             this.value = value;
             this.activate = activate;
             this.toggleState = toggleState;
+            this.valueCache = value.get();
         }
 
         @Override
@@ -403,7 +408,7 @@ public final class BuffInsightConfigScreen extends Screen {
             graphics.fill(getX(), getY(), getX() + width, getY() + height, hovered ? 0xA01A2230 : ROW_BG);
             graphics.renderOutline(getX(), getY(), width, height, hovered ? 0x80496178 : ROW_EDGE);
 
-            Component valueText = value.get();
+            Component valueText = valueCache;
             int pillWidth = minecraft.font.width(valueText) + 12;
             int pillX = getX() + width - pillWidth - 4;
             int pillY = getY() + 3;
@@ -444,6 +449,7 @@ public final class BuffInsightConfigScreen extends Screen {
         @Override
         public void onClick(double mouseX, double mouseY) {
             activate.run();
+            valueCache = value.get();
         }
 
         @Override
@@ -452,13 +458,15 @@ public final class BuffInsightConfigScreen extends Screen {
         }
     }
 
-    /** 主题滑条：深色轨道 + 强调色填充 + 浅色滑块，标签与数值同行 */
+    /** 主题滑条：深色轨道 + 强调色填充 + 浅色滑块，标签与数值同行（数值文案仅在取值变化时重建） */
     private abstract static class ThemedSlider extends AbstractWidget {
         protected double value;
+        private Component messageCache;
 
         private ThemedSlider(int x, int y, int width, int height, Component label, double initial) {
             super(x, y, width, height, label);
             this.value = Mth.clamp(initial, 0.0D, 1.0D);
+            this.messageCache = display(this.value);
         }
 
         protected abstract void applyValue(double value);
@@ -479,13 +487,14 @@ public final class BuffInsightConfigScreen extends Screen {
             graphics.fill(trackX, trackY, trackX + filled, trackY + 3, 0xFF4E9E74);
             int knobX = trackX + filled - 1;
             graphics.fill(knobX, trackY - 2, knobX + 3, trackY + 5, 0xFFE8F2F6);
-            graphics.drawString(minecraft.font, display(value), getX() + 5, getY() + 3,
+            graphics.drawString(minecraft.font, messageCache, getX() + 5, getY() + 3,
                     hovered ? 0xFFFFFFFF : LABEL_TEXT);
         }
 
         private void setFromMouse(double mouseX) {
             value = Mth.clamp((mouseX - (getX() + 5)) / (width - 10), 0.0D, 1.0D);
             applyValue(value);
+            messageCache = display(value);
         }
 
         @Override
@@ -503,11 +512,13 @@ public final class BuffInsightConfigScreen extends Screen {
             if (keyCode == GLFW.GLFW_KEY_LEFT && value > 0.0D) {
                 value = Math.max(0.0D, value - 0.05D);
                 applyValue(value);
+                messageCache = display(value);
                 return true;
             }
             if (keyCode == GLFW.GLFW_KEY_RIGHT && value < 1.0D) {
                 value = Math.min(1.0D, value + 0.05D);
                 applyValue(value);
+                messageCache = display(value);
                 return true;
             }
             return false;
